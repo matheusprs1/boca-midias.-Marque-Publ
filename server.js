@@ -8,15 +8,13 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const PRICE = 1.90;
-const ASAAS_URL = "https://api-sandbox.asaas.com/v3";
+const PRICE = 190; // R$ 1,90 em centavos
+const OBYPAY_URL = "https://api.obypay.app";
 
-// Página inicial
 app.get("/", (req, res) => {
   res.send("Boca Mídias está funcionando!");
 });
 
-// Verificação do servidor
 app.get("/health", (req, res) => {
   res.json({
     status: "online",
@@ -24,74 +22,25 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Informações do sistema
 app.get("/status", (req, res) => {
   res.json({
     project: "Boca Mídias",
-    paymentMode: "DEMO",
-    price: PRICE,
+    paymentMode: "OBYPAY",
+    price: 1.90,
     currency: "BRL",
-    telegramConfigured: Boolean(
-      process.env.TELEGRAM_BOT_TOKEN
-    ),
-    asaasTestConfigured: Boolean(
-      process.env.ASAAS_API_KEY_TEST
-    )
+    obypayConfigured: Boolean(process.env.OBYPAY_API_KEY),
+    telegramConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN)
   });
 });
 
-// Teste de conexão com Asaas Sandbox
-app.get("/asaas-test", async (req, res) => {
-  const apiKey = process.env.ASAAS_API_KEY_TEST;
+// Criar cobrança PIX
+app.post("/create-pix", async (req, res) => {
+  const apiKey = process.env.OBYPAY_API_KEY;
 
   if (!apiKey) {
     return res.status(500).json({
       success: false,
-      message: "Chave de teste não configurada."
-    });
-  }
-
-  try {
-    const response = await axios.get(
-      `${ASAAS_URL}/myAccount/status/`,
-      {
-        headers: {
-          access_token: apiKey,
-          accept: "application/json"
-        },
-        timeout: 15000
-      }
-    );
-
-    return res.json({
-      success: true,
-      mode: "SANDBOX",
-      message: "Conexão com Asaas realizada!",
-      httpStatus: response.status
-    });
-
-  } catch (error) {
-    console.error(
-      "Erro na conexão Asaas:",
-      error.response?.status || error.code
-    );
-
-    return res.status(502).json({
-      success: false,
-      message: "Falha na conexão com Asaas.",
-      asaasStatus: error.response?.status || null
-    });
-  }
-});
-
-// Criar Checkout Pix de teste
-app.post("/create-checkout-test", async (req, res) => {
-  const apiKey = process.env.ASAAS_API_KEY_TEST;
-
-  if (!apiKey) {
-    return res.status(500).json({
-      success: false,
-      message: "Chave Sandbox não configurada."
+      message: "Chave ObyPay não configurada."
     });
   }
 
@@ -99,84 +48,53 @@ app.post("/create-checkout-test", async (req, res) => {
 
   try {
     const response = await axios.post(
-      `${ASAAS_URL}/checkouts`,
+      `${OBYPAY_URL}/transactions`,
       {
-        billingTypes: ["PIX"],
-        chargeTypes: ["DETACHED"],
-        minutesToExpire: 30,
-        externalReference: orderId,
-
-        callback: {
-          successUrl: "https://boca-midias-marque-publ.onrender.com/",
-          cancelUrl: "https://boca-midias-marque-publ.onrender.com/",
-          expiredUrl: "https://boca-midias-marque-publ.onrender.com/"
-        },
-
-        items: [
-          {
-            name: "Acesso Boca Mídias",
-            description: "Acesso ao grupo privado Boca Mídias",
-            quantity: 1,
-            value: PRICE
-          }
-        ]
+        amount: PRICE,
+        description: "Acesso ao grupo Boca Mídias",
+        externalId: orderId
       },
       {
         headers: {
-          access_token: apiKey,
-          "Content-Type": "application/json",
-          accept: "application/json"
+          Authorization: apiKey,
+          "Content-Type": "application/json"
         },
         timeout: 20000
       }
     );
 
-    const checkoutId = response.data.id;
+    const data = response.data;
 
-    if (!checkoutId) {
-      throw new Error("Asaas não retornou o ID do Checkout.");
+    if (!data.id || !data.copyPaste) {
+      throw new Error("Resposta da ObyPay incompleta.");
     }
 
-    return res.json({
+    return res.status(201).json({
       success: true,
-      mode: "SANDBOX",
-      amount: PRICE,
-      currency: "BRL",
-      checkoutId: checkoutId,
+      status: data.status,
       orderId: orderId,
-      checkoutUrl:
-        `https://asaas.com/checkoutSession/show?id=${checkoutId}`
+      transactionId: data.id,
+      amount: data.amount,
+      currency: "BRL",
+      pixCopyPaste: data.copyPaste,
+      qrCodeBase64: data.qrCodeBase64,
+      expiresAt: data.expiresAt
     });
 
   } catch (error) {
     console.error(
-      "Erro ao criar Checkout:",
-      error.response?.data || error.message
+      "Erro ObyPay:",
+      error.response?.status || error.code || "Erro desconhecido"
     );
 
     return res.status(502).json({
       success: false,
-      message: "Não foi possível criar o Checkout de teste.",
-      asaasStatus: error.response?.status || null
+      message: "Não foi possível criar o PIX.",
+      obypayStatus: error.response?.status || null
     });
   }
 });
 
-// Rota antiga de demonstração
-app.post("/create-checkout", (req, res) => {
-  res.json({
-    success: true,
-    mode: "DEMO",
-    message: "Servidor preparado para integração de pagamento.",
-    amount: PRICE,
-    currency: "BRL",
-    paymentCreated: false
-  });
-});
-
-// Inicialização
 app.listen(PORT, () => {
-  console.log(
-    `Boca Mídias rodando na porta ${PORT}`
-  );
+  console.log(`Boca Mídias rodando na porta ${PORT}`);
 });
